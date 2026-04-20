@@ -9,7 +9,7 @@ import { generateId, findUserByEmail, createUser, updateUser, getProducts, creat
 const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'gugan-dev-secret';
-const API_PREFIX = '/api/v1';
+const API_PREFIX = '';
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));

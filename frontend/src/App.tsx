@@ -37,7 +37,7 @@ type Order = {
   totalAmount: number;
 };
 
-const API = (import.meta.env.VITE_API_URL as string) || 'http://localhost:4000/api/v1';
+const API = (import.meta.env.VITE_API_URL as string) || 'http://localhost:4000';
 const REQUEST_TIMEOUT_MS = 12000;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USER_KEY = 'gf_user_session';
