@@ -1,215 +1,186 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import bcrypt from 'bcryptjs';
+import { createClient } from '@supabase/supabase-js';
+import 'dotenv/config';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DB_PATH = path.resolve(__dirname, '../data/store.json');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
 
-const defaultData = {
-  users: [
-    {
-      id: 'u1',
-      name: 'Super Admin',
-      email: 'admin@guganfashions.com',
-      passwordHash: '',
-      role: 'admin',
-      failedLoginAttempts: 0,
-      lockedUntil: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'u2',
-      name: 'Customer',
-      email: 'user@guganfashions.com',
-      passwordHash: '',
-      role: 'user',
-      failedLoginAttempts: 0,
-      lockedUntil: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-  settings: {
-    lowStockThreshold: 10,
-  },
-  products: [
-    {
-      id: 'p1',
-      name: 'Kanchipuram Silk Saree',
-      description: 'Handwoven silk saree with zari border.',
-      category: 'Sarees',
-      brand: 'Gugan Fashions',
-      basePrice: 5499,
-      status: 'ACTIVE',
-      isArchived: false,
-      archivedAt: null,
-      images: [
-        {
-          id: 'img1',
-          url: 'https://images.unsplash.com/photo-1610189027563-6c6f7f399bb4?auto=format&fit=crop&w=800&q=80',
-          sortOrder: 1,
-          isPrimary: true,
-        },
-      ],
-      variants: [
-        { id: 'v1', size: 'M', color: 'Maroon', stockQuantity: 8 },
-        { id: 'v2', size: 'L', color: 'Royal Blue', stockQuantity: 14 },
-      ],
-      discount: {
-        type: 'PERCENTAGE',
-        value: 10,
-        startsAt: null,
-        expiresAt: null,
-        isActive: true,
-        finalPrice: 4949,
-      },
-      auditLogs: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'p2',
-      name: 'Cotton Kurti Set',
-      description: 'Comfort fit daily-wear kurti with dupatta.',
-      category: 'Kurtis',
-      brand: 'Gugan Fashions',
-      basePrice: 1799,
-      status: 'ACTIVE',
-      isArchived: false,
-      archivedAt: null,
-      images: [
-        {
-          id: 'img2',
-          url: 'https://images.unsplash.com/photo-1583391733981-8e7f1a0e7f4b?auto=format&fit=crop&w=800&q=80',
-          sortOrder: 1,
-          isPrimary: true,
-        },
-      ],
-      variants: [
-        { id: 'v3', size: 'S', color: 'Mint', stockQuantity: 25 },
-        { id: 'v4', size: 'M', color: 'Peach', stockQuantity: 6 },
-      ],
-      discount: {
-        type: null,
-        value: null,
-        startsAt: null,
-        expiresAt: null,
-        isActive: false,
-        finalPrice: 1799,
-      },
-      auditLogs: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-  orders: [
-    {
-      id: 'o1',
-      orderNumber: 'GF-1001',
-      customerName: 'Priya Raman',
-      customerEmail: 'priya@example.com',
-      shippingAddress: '12, Lake View Road, Chennai',
-      status: 'ORDER_PLACED',
-      lineItems: [
-        {
-          productId: 'p1',
-          productName: 'Kanchipuram Silk Saree',
-          variant: 'M / Maroon',
-          quantity: 1,
-          unitPrice: 4949,
-        },
-      ],
-      totalAmount: 4949,
-      statusHistory: [
-        {
-          status: 'ORDER_PLACED',
-          note: 'Order created',
-          changedAt: new Date().toISOString(),
-          changedBy: 'system',
-        },
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-};
-
-let writeQueue = Promise.resolve();
-
-async function ensureDb() {
-  try {
-    await fs.access(DB_PATH);
-  } catch {
-    await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
-    const seeded = structuredClone(defaultData);
-    seeded.users[0].passwordHash = bcrypt.hashSync('admin123', 10);
-    seeded.users[1].passwordHash = bcrypt.hashSync('user1234', 10);
-    await fs.writeFile(DB_PATH, JSON.stringify(seeded, null, 2), 'utf-8');
-  }
-
-  const raw = await fs.readFile(DB_PATH, 'utf-8');
-  const data = JSON.parse(raw);
-  let changed = false;
-
-  for (const user of data.users ?? []) {
-    if (user.role && user.role !== 'admin' && user.role !== 'user') {
-      user.role = 'admin';
-      changed = true;
-    }
-  }
-
-  const adminUser = data.users?.find((user) => user.email?.toLowerCase() === 'admin@guganfashions.com');
-  if (adminUser && !adminUser.passwordHash) {
-    adminUser.passwordHash = bcrypt.hashSync('admin123', 10);
-    adminUser.role = 'admin';
-    changed = true;
-  }
-
-  const demoUser = data.users?.find((user) => user.email?.toLowerCase() === 'user@guganfashions.com');
-  if (!demoUser) {
-    data.users.push({
-      id: 'u2',
-      name: 'Customer',
-      email: 'user@guganfashions.com',
-      passwordHash: bcrypt.hashSync('user1234', 10),
-      role: 'user',
-      failedLoginAttempts: 0,
-      lockedUntil: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    changed = true;
-  }
-
-  if (demoUser && demoUser.name === 'Demo User') {
-    demoUser.name = 'Customer';
-    changed = true;
-  }
-
-  if (changed) await writeDb(data);
+if (!supabaseUrl || !supabaseKey) {
+  console.warn('Supabase credentials missing. DB operations will fail.');
 }
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// --- Helpers to map between DB (snake_case) and JS (camelCase) ---
+
+function mapUserToJS(u) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    passwordHash: u.password_hash,
+    role: u.role,
+    failedLoginAttempts: u.failed_login_attempts,
+    lockedUntil: u.locked_until,
+    createdAt: u.created_at,
+    updatedAt: u.updated_at,
+  };
+}
+
+function mapUserToDB(u) {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    password_hash: u.passwordHash,
+    role: u.role,
+    failed_login_attempts: u.failedLoginAttempts,
+    locked_until: u.lockedUntil,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+// --- Specific CRUD Functions ---
 
 export async function readDb() {
-  await ensureDb();
-  const raw = await fs.readFile(DB_PATH, 'utf-8');
-  return JSON.parse(raw);
+  // Mocking the old readDb for compatibility where necessary,
+  // but we should move to specific functions.
+  const [users, products, orders, settings] = await Promise.all([
+    supabase.from('users').select('*'),
+    supabase.from('products').select('*'),
+    supabase.from('orders').select('*'),
+    supabase.from('settings').select('*'),
+  ]);
+
+  return {
+    users: (users.data || []).map(mapUserToJS),
+    products: products.data || [],
+    orders: orders.data || [],
+    settings: (settings.data || []).reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {}),
+  };
 }
 
-export async function writeDb(data) {
-  writeQueue = writeQueue.then(() => fs.writeFile(DB_PATH, JSON.stringify(data, null, 2), 'utf-8'));
-  await writeQueue;
+export async function findUserByEmail(email) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', email)
+    .single();
+  if (error || !data) return null;
+  return mapUserToJS(data);
 }
 
-export async function updateDb(mutator) {
-  const db = await readDb();
-  const next = await mutator(db);
-  await writeDb(next ?? db);
-  return next ?? db;
+export async function createUser(user) {
+  const { data, error } = await supabase
+    .from('users')
+    .insert([mapUserToDB(user)])
+    .select()
+    .single();
+  if (error) throw error;
+  return mapUserToJS(data);
+}
+
+export async function updateUser(id, updates) {
+  const dbUpdates = {};
+  if (updates.name) dbUpdates.name = updates.name;
+  if (updates.email) dbUpdates.email = updates.email;
+  if (updates.passwordHash) dbUpdates.password_hash = updates.passwordHash;
+  if (updates.role) dbUpdates.role = updates.role;
+  if (typeof updates.failedLoginAttempts === 'number') dbUpdates.failed_login_attempts = updates.failedLoginAttempts;
+  if (updates.lockedUntil !== undefined) dbUpdates.locked_until = updates.lockedUntil;
+  dbUpdates.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(dbUpdates)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return mapUserToJS(data);
+}
+
+export async function getProducts(filters = {}) {
+  let query = supabase.from('products').select('*').eq('is_archived', false);
+
+  if (filters.category) query = query.eq('category', filters.category);
+  if (filters.status) query = query.eq('status', filters.status);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createProduct(product) {
+  const { data, error } = await supabase
+    .from('products')
+    .insert([product])
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProduct(id, updates) {
+  const { data, error } = await supabase
+    .from('products')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteProduct(id) {
+  const { error } = await supabase.from('products').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function createOrder(order) {
+  const { data, error } = await supabase
+    .from('orders')
+    .insert([order])
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateOrder(id, updates) {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getSettings() {
+  const { data, error } = await supabase.from('settings').select('*');
+  if (error) throw error;
+  return (data || []).reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {});
+}
+
+export async function updateSettings(key, value) {
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key, value });
+  if (error) throw error;
 }
 
 export function generateId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Compat layer for index.js updateDb - Minimal support for common operations
+export async function updateDb(mutator) {
+  // This is a high-level helper that will be deprecated once index.js is refactored.
+  const db = await readDb();
+  // We simulate the mutator on the local copy.
+  // Note: This won't actually sync back to Supabase automatically for all cases!
+  // We need to refactor index.js to use the specific functions above.
+  return await mutator(db);
 }

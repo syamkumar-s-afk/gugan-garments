@@ -1,9 +1,10 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { generateId, readDb, updateDb } from './store.js';
+import { generateId, findUserByEmail, createUser, updateUser, getProducts, createProduct, updateProduct, deleteProduct, createOrder, updateOrder, getSettings, updateSettings } from './store.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -84,8 +85,7 @@ const signupSchema = z.object({
 });
 
 async function processLogin(email, password, expectedRole = null) {
-  const db = await readDb();
-  const user = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const user = await findUserByEmail(email.toLowerCase());
 
   if (!user) {
     throw new Error('Invalid credentials');
@@ -103,26 +103,17 @@ async function processLogin(email, password, expectedRole = null) {
 
   const match = await bcrypt.compare(password, user.passwordHash);
   if (!match) {
-    await updateDb((draft) => {
-      const current = draft.users.find((u) => u.id === user.id);
-      current.failedLoginAttempts += 1;
-      if (current.failedLoginAttempts >= 5) {
-        current.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-        current.failedLoginAttempts = 0;
-      }
-      current.updatedAt = new Date().toISOString();
-      return draft;
-    });
+    const failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+    const updates = { failedLoginAttempts };
+    if (failedLoginAttempts >= 5) {
+      updates.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      updates.failedLoginAttempts = 0;
+    }
+    await updateUser(user.id, updates);
     throw new Error('Invalid credentials');
   }
 
-  await updateDb((draft) => {
-    const current = draft.users.find((u) => u.id === user.id);
-    current.failedLoginAttempts = 0;
-    current.lockedUntil = null;
-    current.updatedAt = new Date().toISOString();
-    return draft;
-  });
+  await updateUser(user.id, { failedLoginAttempts: 0, lockedUntil: null });
 
   return user;
 }
@@ -136,8 +127,7 @@ app.post(`${API_PREFIX}/auth/user/signup`, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ message: 'Invalid input' });
 
   const payload = parsed.data;
-  const db = await readDb();
-  const existing = db.users.find((u) => u.email.toLowerCase() === payload.email.toLowerCase());
+  const existing = await findUserByEmail(payload.email.toLowerCase());
   if (existing) return res.status(409).json({ message: 'Email already in use' });
 
   const now = new Date().toISOString();
@@ -153,10 +143,7 @@ app.post(`${API_PREFIX}/auth/user/signup`, async (req, res) => {
     updatedAt: now,
   };
 
-  await updateDb((draft) => {
-    draft.users.push(user);
-    return draft;
-  });
+  await createUser(user);
 
   const token = signToken(user);
   res.status(201).json({
@@ -263,46 +250,49 @@ app.post(`${API_PREFIX}/auth/reset-password`, async (req, res) => {
 
 app.get(`${API_PREFIX}/products`, authRequired, adminOnly, async (req, res) => {
   const { search = '', category, status, sortBy = 'updatedAt', sortOrder = 'desc', page = '1', pageSize = '10' } = req.query;
-  const db = await readDb();
 
-  let items = db.products.filter((p) => !p.isArchived);
+  try {
+    let items = await getProducts({ category, status });
 
-  if (search) {
-    const q = String(search).toLowerCase();
-    items = items.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q) ||
-        p.brand.toLowerCase().includes(q),
-    );
+    if (search) {
+      const q = String(search).toLowerCase();
+      items = items.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q) ||
+          p.brand.toLowerCase().includes(q),
+      );
+    }
+
+    items = items
+      .map((p) => ({ ...p, finalPrice: computeFinalPrice(p.basePrice, p.discount) }))
+      .sort((a, b) => {
+        const aVal = a[sortBy] ?? '';
+        const bVal = b[sortBy] ?? '';
+        if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+    const p = Number(page);
+    const ps = Number(pageSize);
+    const total = items.length;
+    const data = items.slice((p - 1) * ps, p * ps);
+
+    res.json({ data, pagination: { page: p, pageSize: ps, total } });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
-
-  if (category) items = items.filter((p) => p.category === category);
-  if (status) items = items.filter((p) => p.status === status);
-
-  items = items
-    .map((p) => ({ ...p, finalPrice: computeFinalPrice(p.basePrice, p.discount) }))
-    .sort((a, b) => {
-      const aVal = a[sortBy] ?? '';
-      const bVal = b[sortBy] ?? '';
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
-    });
-
-  const p = Number(page);
-  const ps = Number(pageSize);
-  const total = items.length;
-  const data = items.slice((p - 1) * ps, p * ps);
-
-  res.json({ data, pagination: { page: p, pageSize: ps, total } });
 });
 
 app.get(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res) => {
-  const db = await readDb();
-  const product = db.products.find((p) => p.id === req.params.id);
-  if (!product) return res.status(404).json({ message: 'Product not found' });
-  return res.json({ ...product, finalPrice: computeFinalPrice(product.basePrice, product.discount) });
+  try {
+    const { data: product, error } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (error || !product) return res.status(404).json({ message: 'Product not found' });
+    return res.json({ ...product, finalPrice: computeFinalPrice(product.basePrice, product.discount) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 const productCreateSchema = z.object({
@@ -334,10 +324,10 @@ app.post(`${API_PREFIX}/products`, authRequired, adminOnly, async (req, res) => 
     description: payload.description,
     category: payload.category,
     brand: payload.brand,
-    basePrice: payload.basePrice,
+    base_price: payload.basePrice,
     status: payload.status,
-    isArchived: false,
-    archivedAt: null,
+    is_archived: false,
+    archived_at: null,
     images: [
       {
         id: generateId('img'),
@@ -355,25 +345,25 @@ app.post(`${API_PREFIX}/products`, authRequired, adminOnly, async (req, res) => 
       },
     ],
     discount: { type: null, value: null, startsAt: null, expiresAt: null, isActive: false, finalPrice: payload.basePrice },
-    auditLogs: [
+    audit_logs: [
       {
         id: generateId('a'),
         actor: req.user.email,
         action: 'PRODUCT_CREATED',
         changes: payload,
-        createdAt: now,
+        created_at: now,
       },
     ],
-    createdAt: now,
-    updatedAt: now,
+    created_at: now,
+    updated_at: now,
   };
 
-  await updateDb((draft) => {
-    draft.products.push(product);
-    return draft;
-  });
-
-  res.status(201).json(product);
+  try {
+    const data = await createProduct(product);
+    res.status(201).json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.patch(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res) => {
@@ -394,128 +384,120 @@ app.patch(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res
 
   if (!patch.success) return res.status(400).json({ message: 'Invalid payload' });
 
-  let updatedProduct = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-    if (patch.data.name) product.name = patch.data.name;
-    if (patch.data.description) product.description = patch.data.description;
-    if (patch.data.category) product.category = patch.data.category;
-    if (patch.data.brand) product.brand = patch.data.brand;
-    if (patch.data.status) product.status = patch.data.status;
-    if (typeof patch.data.basePrice === 'number') product.basePrice = patch.data.basePrice;
+    const updates: any = {};
+    if (patch.data.name) updates.name = patch.data.name;
+    if (patch.data.description) updates.description = patch.data.description;
+    if (patch.data.category) updates.category = patch.data.category;
+    if (patch.data.brand) updates.brand = patch.data.brand;
+    if (patch.data.status) updates.status = patch.data.status;
+    if (typeof patch.data.basePrice === 'number') updates.base_price = patch.data.basePrice;
+    
     if (patch.data.image) {
-      if (!product.images.length) {
-        product.images.push({
-          id: generateId('img'),
-          url: patch.data.image,
-          sortOrder: 1,
-          isPrimary: true,
-        });
+      const images = [...(product.images || [])];
+      if (!images.length) {
+        images.push({ id: generateId('img'), url: patch.data.image, sortOrder: 1, isPrimary: true });
       } else {
-        product.images[0].url = patch.data.image;
-        product.images[0].isPrimary = true;
+        images[0].url = patch.data.image;
+        images[0].isPrimary = true;
       }
+      updates.images = images;
     }
+
     if (typeof patch.data.stockQuantity === 'number') {
-      if (!product.variants.length) {
-        product.variants.push({
-          id: generateId('v'),
-          size: patch.data.size || 'Free',
-          color: patch.data.color || 'Default',
-          stockQuantity: patch.data.stockQuantity,
-        });
+      const variants = [...(product.variants || [])];
+      if (!variants.length) {
+        variants.push({ id: generateId('v'), size: patch.data.size || 'Free', color: patch.data.color || 'Default', stockQuantity: patch.data.stockQuantity });
       } else {
-        product.variants[0].stockQuantity = patch.data.stockQuantity;
-        if (patch.data.size) product.variants[0].size = patch.data.size;
-        if (patch.data.color) product.variants[0].color = patch.data.color;
+        variants[0].stockQuantity = patch.data.stockQuantity;
+        if (patch.data.size) variants[0].size = patch.data.size;
+        if (patch.data.color) variants[0].color = patch.data.color;
       }
+      updates.variants = variants;
     }
 
-    product.updatedAt = new Date().toISOString();
-    product.auditLogs.push({
-      id: generateId('a'),
-      actor: req.user.email,
-      action: 'PRODUCT_UPDATED',
-      changes: patch.data,
-      createdAt: new Date().toISOString(),
-    });
+    const now = new Date().toISOString();
+    const audit_logs = [...(product.audit_logs || []), { id: generateId('a'), actor: req.user.email, action: 'PRODUCT_UPDATED', changes: patch.data, created_at: now }];
+    updates.audit_logs = audit_logs;
 
-    updatedProduct = product;
-    return draft;
-  });
-
-  if (!updatedProduct) return res.status(404).json({ message: 'Product not found' });
-  res.json(updatedProduct);
+    const data = await updateProduct(req.params.id, updates);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.put(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res) => {
   const parsed = productCreateSchema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: 'Invalid payload' });
 
-  let updated = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
     const patch = parsed.data;
-    if (patch.name) product.name = patch.name;
-    if (patch.description) product.description = patch.description;
-    if (patch.category) product.category = patch.category;
-    if (patch.brand) product.brand = patch.brand;
-    if (typeof patch.basePrice === 'number') product.basePrice = patch.basePrice;
-    if (patch.status) product.status = patch.status;
+    const updates: any = {};
+    if (patch.name) updates.name = patch.name;
+    if (patch.description) updates.description = patch.description;
+    if (patch.category) updates.category = patch.category;
+    if (patch.brand) updates.brand = patch.brand;
+    if (typeof patch.basePrice === 'number') updates.base_price = patch.basePrice;
+    if (patch.status) updates.status = patch.status;
+    
     if (patch.image) {
-      if (!product.images.length) {
-        product.images.push({ id: generateId('img'), url: patch.image, sortOrder: 1, isPrimary: true });
+      const images = [...(product.images || [])];
+      if (!images.length) {
+        images.push({ id: generateId('img'), url: patch.image, sortOrder: 1, isPrimary: true });
       } else {
-        product.images[0].url = patch.image;
-        product.images[0].isPrimary = true;
+        images[0].url = patch.image;
+        images[0].isPrimary = true;
       }
+      updates.images = images;
     }
-    if (typeof patch.stockQuantity === 'number') {
-      if (!product.variants.length) {
-        product.variants.push({
-          id: generateId('v'),
-          size: patch.size || 'Free',
-          color: patch.color || 'Default',
-          stockQuantity: patch.stockQuantity,
-        });
-      } else {
-        product.variants[0].stockQuantity = patch.stockQuantity;
-        if (patch.size) product.variants[0].size = patch.size;
-        if (patch.color) product.variants[0].color = patch.color;
-      }
-    }
-    product.updatedAt = new Date().toISOString();
-    updated = product;
-    return draft;
-  });
 
-  if (!updated) return res.status(404).json({ message: 'Product not found' });
-  res.json(updated);
+    if (typeof patch.stockQuantity === 'number') {
+      const variants = [...(product.variants || [])];
+      if (!variants.length) {
+        variants.push({ id: generateId('v'), size: patch.size || 'Free', color: patch.color || 'Default', stockQuantity: patch.stockQuantity });
+      } else {
+        variants[0].stockQuantity = patch.stockQuantity;
+        if (patch.size) variants[0].size = patch.size;
+        if (patch.color) variants[0].color = patch.color;
+      }
+      updates.variants = variants;
+    }
+
+    const data = await updateProduct(req.params.id, updates);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.patch(`${API_PREFIX}/products/:id/price`, authRequired, adminOnly, async (req, res) => {
   const parsed = z.object({ basePrice: z.number().positive() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: 'Invalid basePrice' });
 
-  let updated = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
-    product.basePrice = parsed.data.basePrice;
-    if (product.discount?.isActive) {
-      product.discount.finalPrice = computeFinalPrice(product.basePrice, product.discount);
-    }
-    product.updatedAt = new Date().toISOString();
-    updated = product;
-    return draft;
-  });
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-  if (!updated) return res.status(404).json({ message: 'Product not found' });
-  res.json({ ...updated, finalPrice: computeFinalPrice(updated.basePrice, updated.discount) });
+    const updates: any = { base_price: parsed.data.basePrice };
+    if (product.discount?.isActive) {
+      updates.discount = {
+        ...product.discount,
+        finalPrice: computeFinalPrice(parsed.data.basePrice, product.discount)
+      };
+    }
+
+    const data = await updateProduct(req.params.id, updates);
+    res.json({ ...data, finalPrice: computeFinalPrice(data.base_price, data.discount) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.post(`${API_PREFIX}/products/:id/discounts`, authRequired, adminOnly, async (req, res) => {
@@ -530,85 +512,84 @@ app.post(`${API_PREFIX}/products/:id/discounts`, authRequired, adminOnly, async 
 
   if (!parsed.success) return res.status(400).json({ message: 'Invalid payload' });
 
-  let updated = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
-    product.discount = {
-      ...parsed.data,
-      startsAt: parsed.data.startsAt ?? null,
-      expiresAt: parsed.data.expiresAt ?? null,
-      isActive: true,
-      finalPrice: computeFinalPrice(product.basePrice, { ...parsed.data, isActive: true }),
-    };
-    product.updatedAt = new Date().toISOString();
-    updated = product;
-    return draft;
-  });
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-  if (!updated) return res.status(404).json({ message: 'Product not found' });
-  res.json({ ...updated, finalPrice: computeFinalPrice(updated.basePrice, updated.discount) });
+    const updates = {
+      discount: {
+        ...parsed.data,
+        startsAt: parsed.data.startsAt ?? null,
+        expiresAt: parsed.data.expiresAt ?? null,
+        isActive: true,
+        finalPrice: computeFinalPrice(product.base_price, { ...parsed.data, isActive: true }),
+      }
+    };
+
+    const data = await updateProduct(req.params.id, updates);
+    res.json({ ...data, finalPrice: computeFinalPrice(data.base_price, data.discount) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.delete(`${API_PREFIX}/products/:id/discounts/active`, authRequired, adminOnly, async (req, res) => {
-  let updated = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
-    product.discount = {
-      type: null,
-      value: null,
-      startsAt: null,
-      expiresAt: null,
-      isActive: false,
-      finalPrice: product.basePrice,
-    };
-    product.updatedAt = new Date().toISOString();
-    updated = product;
-    return draft;
-  });
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-  if (!updated) return res.status(404).json({ message: 'Product not found' });
-  res.json(updated);
+    const updates = {
+      discount: {
+        type: null,
+        value: null,
+        startsAt: null,
+        expiresAt: null,
+        isActive: false,
+        finalPrice: product.base_price,
+      }
+    };
+
+    const data = await updateProduct(req.params.id, updates);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.delete(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res) => {
-  let deleted = false;
-  await updateDb((draft) => {
-    const before = draft.products.length;
-    draft.products = draft.products.filter((p) => p.id !== req.params.id);
-    deleted = draft.products.length < before;
-    return draft;
-  });
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-  if (!deleted) return res.status(404).json({ message: 'Product not found' });
-  return res.status(204).send();
+    await updateProduct(req.params.id, { is_archived: true, archived_at: new Date().toISOString() });
+    return res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.post(`${API_PREFIX}/products/:id/images`, authRequired, adminOnly, async (req, res) => {
   const parsed = z.object({ url: z.string().url() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: 'Invalid URL' });
 
-  let updated = null;
-  await updateDb((draft) => {
-    const product = draft.products.find((p) => p.id === req.params.id);
-    if (!product) return draft;
+  try {
+    const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
+    if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
+    const images = [...(product.images || [])];
     const image = {
       id: generateId('img'),
       url: parsed.data.url,
-      sortOrder: product.images.length + 1,
-      isPrimary: product.images.length === 0,
+      sortOrder: images.length + 1,
+      isPrimary: images.length === 0,
     };
 
-    product.images.push(image);
-    product.updatedAt = new Date().toISOString();
-    updated = product;
-    return draft;
-  });
-
-  if (!updated) return res.status(404).json({ message: 'Product not found' });
-  res.json(updated);
+    images.push(image);
+    const data = await updateProduct(req.params.id, { images });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.patch(`${API_PREFIX}/products/:id/images/reorder`, authRequired, adminOnly, async (req, res) => {
@@ -706,25 +687,33 @@ app.delete(`${API_PREFIX}/products/:id/variants/:variantId`, authRequired, admin
 
 app.get(`${API_PREFIX}/orders`, authRequired, adminOnly, async (req, res) => {
   const { status, search = '', dateFrom, dateTo } = req.query;
-  const db = await readDb();
-  let orders = [...db.orders];
+  
+  try {
+    let query = supabase.from('orders').select('*');
+    if (status) query = query.eq('status', status);
+    
+    let { data: orders, error } = await query;
+    if (error) throw error;
+    orders = orders || [];
 
-  if (status) orders = orders.filter((o) => o.status === status);
-  if (search) {
-    const q = String(search).toLowerCase();
-    orders = orders.filter(
-      (o) =>
-        o.orderNumber.toLowerCase().includes(q) ||
-        o.customerName.toLowerCase().includes(q) ||
-        o.customerEmail.toLowerCase().includes(q),
-    );
+    if (search) {
+      const q = String(search).toLowerCase();
+      orders = orders.filter(
+        (o) =>
+          o.orderNumber.toLowerCase().includes(q) ||
+          o.customerName.toLowerCase().includes(q) ||
+          o.customerEmail.toLowerCase().includes(q),
+      );
+    }
+
+    if (dateFrom) orders = orders.filter((o) => new Date(o.createdAt) >= new Date(String(dateFrom)));
+    if (dateTo) orders = orders.filter((o) => new Date(o.createdAt) <= new Date(String(dateTo)));
+
+    orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
-
-  if (dateFrom) orders = orders.filter((o) => new Date(o.createdAt) >= new Date(String(dateFrom)));
-  if (dateTo) orders = orders.filter((o) => new Date(o.createdAt) <= new Date(String(dateTo)));
-
-  orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json(orders);
 });
 
 app.get(`${API_PREFIX}/orders/my`, authRequired, userOnly, async (req, res) => {
@@ -751,80 +740,88 @@ app.post(`${API_PREFIX}/orders`, authRequired, userOnly, async (req, res) => {
   const parsed = userOrderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: 'Invalid payload' });
 
-  const db = await readDb();
-  const cartItems = parsed.data.items;
-  const lineItems = [];
-  let totalAmount = 0;
+  try {
+    const { data: products, error: prodError } = await supabase.from('products').select('*').eq('status', 'ACTIVE');
+    if (prodError) throw prodError;
 
-  for (const item of cartItems) {
-    const product = db.products.find((p) => p.id === item.productId && p.status === 'ACTIVE');
-    if (!product) return res.status(400).json({ message: `Product not available: ${item.productId}` });
+    const cartItems = parsed.data.items;
+    const lineItems = [];
+    let totalAmount = 0;
+    const stockUpdates = [];
 
-    const variant = product.variants.find((v) => (item.selectedSize ? v.size === item.selectedSize : true)) || product.variants[0];
-    if (!variant) return res.status(400).json({ message: `No variant available for: ${product.name}` });
-    if (variant.stockQuantity < item.quantity) {
-      return res.status(400).json({ message: `${product.name} has only ${variant.stockQuantity} in stock` });
-    }
-
-    const unitPrice = computeFinalPrice(product.basePrice, product.discount);
-    totalAmount += unitPrice * item.quantity;
-    lineItems.push({
-      productId: product.id,
-      productName: product.name,
-      variant: `${variant.size} / ${variant.color}`,
-      quantity: item.quantity,
-      unitPrice,
-    });
-  }
-
-  const timestamp = new Date().toISOString();
-  const orderId = generateId('o');
-  const order = {
-    id: orderId,
-    userId: req.user.sub,
-    orderNumber: `GF-${Math.floor(1000 + Math.random() * 9000)}`,
-    customerName: req.user.name || 'Customer',
-    customerEmail: req.user.email,
-    shippingAddress: 'Address not provided',
-    status: 'ORDER_PLACED',
-    lineItems,
-    totalAmount,
-    statusHistory: [
-      {
-        status: 'ORDER_PLACED',
-        note: 'Order created by customer',
-        changedAt: timestamp,
-        changedBy: req.user.email,
-      },
-    ],
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
-
-  await updateDb((draft) => {
-    draft.orders.push(order);
     for (const item of cartItems) {
-      const product = draft.products.find((p) => p.id === item.productId);
-      if (!product) continue;
-      const variant = product.variants.find((v) => (item.selectedSize ? v.size === item.selectedSize : true)) || product.variants[0];
-      if (!variant) continue;
-      variant.stockQuantity = Math.max(0, variant.stockQuantity - item.quantity);
-      product.updatedAt = new Date().toISOString();
-      if (product.variants.every((v) => v.stockQuantity === 0)) {
-        product.status = 'OUT_OF_STOCK';
-      }
-    }
-    return draft;
-  });
+      const product = products.find((p) => p.id === item.productId);
+      if (!product) return res.status(400).json({ message: `Product not available: ${item.productId}` });
 
-  return res.status(201).json({ message: 'Order placed', order });
+      const variants = product.variants || [];
+      const variantIdx = variants.findIndex((v) => (item.selectedSize ? v.size === item.selectedSize : true));
+      const variant = variants[variantIdx] || variants[0];
+      
+      if (!variant) return res.status(400).json({ message: `No variant available for: ${product.name}` });
+      if (variant.stockQuantity < item.quantity) {
+        return res.status(400).json({ message: `${product.name} has only ${variant.stockQuantity} in stock` });
+      }
+
+      const unitPrice = computeFinalPrice(product.base_price, product.discount);
+      totalAmount += unitPrice * item.quantity;
+      lineItems.push({
+        productId: product.id,
+        productName: product.name,
+        variant: `${variant.size} / ${variant.color}`,
+        quantity: item.quantity,
+        unitPrice,
+      });
+
+      // Prepare stock update
+      const nextVariants = [...variants];
+      nextVariants[variantIdx >= 0 ? variantIdx : 0] = { ...variant, stockQuantity: variant.stockQuantity - item.quantity };
+      stockUpdates.push({ id: product.id, variants: nextVariants });
+    }
+
+    const timestamp = new Date().toISOString();
+    const orderId = generateId('o');
+    const order = {
+      id: orderId,
+      user_id: req.user.sub,
+      order_number: `GF-${Math.floor(1000 + Math.random() * 9000)}`,
+      customer_name: req.user.name || 'Customer',
+      customer_email: req.user.email,
+      shipping_address: 'Address not provided',
+      status: 'ORDER_PLACED',
+      line_items: lineItems,
+      total_amount: totalAmount,
+      status_history: [
+        {
+          status: 'ORDER_PLACED',
+          note: 'Order created by customer',
+          changedAt: timestamp,
+          changedBy: req.user.email,
+        },
+      ],
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    // Execute stock updates and order creation in parallel
+    await Promise.all([
+      createOrder(order),
+      ...stockUpdates.map((upd) => updateProduct(upd.id, { variants: upd.variants }))
+    ]);
+
+    res.status(201).json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.get(`${API_PREFIX}/orders/:id`, authRequired, adminOnly, async (req, res) => {
-  const db = await readDb();
-  const order = db.orders.find((o) => o.id === req.params.id);
-  if (!order) return res.status(404).json({ message: 'Order not found' });
-  return res.json(order);
+  try {
+    const { data: order, error } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
+    if (error || !order) return res.status(404).json({ message: 'Order not found' });
+    return res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.patch(`${API_PREFIX}/orders/:id/status`, authRequired, adminOnly, async (req, res) => {
@@ -837,142 +834,160 @@ app.patch(`${API_PREFIX}/orders/:id/status`, authRequired, adminOnly, async (req
 
   if (!parsed.success) return res.status(400).json({ message: 'Invalid payload' });
 
-  let updatedOrder = null;
-
-  await updateDb((draft) => {
-    const order = draft.orders.find((o) => o.id === req.params.id);
-    if (!order) return draft;
+  try {
+    const { data: order, error: fetchError } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
+    if (fetchError || !order) return res.status(404).json({ message: 'Order not found' });
 
     const currentIndex = orderFlow.indexOf(order.status);
     const nextIndex = orderFlow.indexOf(parsed.data.status);
 
     if (nextIndex !== currentIndex + 1) {
-      return draft;
+      return res.status(400).json({ message: 'Invalid status transition' });
     }
 
-    order.status = parsed.data.status;
-    order.updatedAt = new Date().toISOString();
-    order.statusHistory.push({
+    const statusHistory = [...(order.status_history || []), {
       status: parsed.data.status,
       note: parsed.data.note ?? '',
       changedAt: new Date().toISOString(),
       changedBy: req.user.email,
+    }];
+
+    const data = await updateOrder(req.params.id, {
+      status: parsed.data.status,
+      status_history: statusHistory
     });
 
-    updatedOrder = order;
-    return draft;
-  });
-
-  if (!updatedOrder) {
-    return res.status(400).json({ message: 'Invalid transition or order not found' });
+    return res.json({
+      ...data,
+      emailNotification: {
+        provider: 'Resend (stub)',
+        delivered: true,
+        message: `Status update sent to ${data.customer_email}`,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
-
-  return res.json({
-    ...updatedOrder,
-    emailNotification: {
-      provider: 'Resend (stub)',
-      delivered: true,
-      message: `Status update sent to ${updatedOrder.customerEmail}`,
-    },
-  });
 });
 
 app.get(`${API_PREFIX}/dashboard/kpis`, authRequired, adminOnly, async (_req, res) => {
-  const db = await readDb();
-  const now = new Date();
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
+  try {
+    const { data: orders, error } = await supabase.from('orders').select('created_at, total_amount, status');
+    if (error) throw error;
 
-  const startOfWeek = new Date(now);
-  const day = startOfWeek.getDay() || 7;
-  startOfWeek.setDate(startOfWeek.getDate() - day + 1);
-  startOfWeek.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const startOfDay = new Date(now).setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - (now.getDay() || 7) + 1);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayOrders = orders.filter(o => new Date(o.created_at).getTime() >= startOfDay);
+    const weekOrders = orders.filter(o => new Date(o.created_at).getTime() >= startOfWeek);
+    const monthOrders = orders.filter(o => new Date(o.created_at).getTime() >= startOfMonth);
 
-  const bySince = (since) => db.orders.filter((o) => new Date(o.createdAt) >= since);
-
-  const todayOrders = bySince(startOfDay);
-  const weekOrders = bySince(startOfWeek);
-  const monthOrders = bySince(startOfMonth);
-
-  res.json({
-    totalOrdersToday: todayOrders.length,
-    totalOrdersWeek: weekOrders.length,
-    totalOrdersMonth: monthOrders.length,
-    totalRevenue: db.orders.reduce((sum, o) => sum + o.totalAmount, 0),
-    pendingOrders: db.orders.filter((o) => o.status !== 'DELIVERED').length,
-  });
+    res.json({
+      totalOrdersToday: todayOrders.length,
+      totalOrdersWeek: weekOrders.length,
+      totalOrdersMonth: monthOrders.length,
+      totalRevenue: orders.reduce((sum, o) => sum + Number(o.total_amount), 0),
+      pendingOrders: orders.filter((o) => o.status !== 'DELIVERED').length,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.get(`${API_PREFIX}/dashboard/top-products`, authRequired, adminOnly, async (_req, res) => {
-  const db = await readDb();
-  const sales = new Map();
+  try {
+    const { data: orders, error } = await supabase.from('orders').select('line_items');
+    if (error) throw error;
 
-  for (const order of db.orders) {
-    for (const item of order.lineItems) {
-      const current = sales.get(item.productName) ?? 0;
-      sales.set(item.productName, current + item.quantity);
+    const sales = new Map();
+    for (const order of orders || []) {
+      for (const item of order.line_items || []) {
+        const current = sales.get(item.productName) ?? 0;
+        sales.set(item.productName, current + item.quantity);
+      }
     }
+
+    const result = [...sales.entries()]
+      .map(([name, quantity]) => ({ name, quantity }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
-
-  const result = [...sales.entries()]
-    .map(([name, quantity]) => ({ name, quantity }))
-    .sort((a, b) => b.quantity - a.quantity)
-    .slice(0, 5);
-
-  res.json(result);
 });
 
 app.get(`${API_PREFIX}/dashboard/low-stock`, authRequired, adminOnly, async (_req, res) => {
-  const db = await readDb();
-  const threshold = db.settings.lowStockThreshold ?? 10;
-  const low = [];
+  try {
+    const settings = await getSettings();
+    const threshold = settings.lowStockThreshold ?? 10;
+    
+    const { data: products, error } = await supabase.from('products').select('*').eq('is_archived', false);
+    if (error) throw error;
 
-  for (const p of db.products.filter((item) => !item.isArchived)) {
-    for (const v of p.variants) {
-      if (v.stockQuantity < threshold) {
-        low.push({
-          productId: p.id,
-          productName: p.name,
-          variantId: v.id,
-          size: v.size,
-          color: v.color,
-          stockQuantity: v.stockQuantity,
-        });
+    const low = [];
+    for (const p of products || []) {
+      for (const v of p.variants || []) {
+        if (v.stockQuantity < threshold) {
+          low.push({
+            productId: p.id,
+            productName: p.name,
+            variantId: v.id,
+            size: v.size,
+            color: v.color,
+            stockQuantity: v.stockQuantity,
+          });
+        }
       }
     }
-  }
 
-  res.json({ threshold, items: low });
+    res.json({ threshold, items: low });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.get(`${API_PREFIX}/dashboard/orders-by-status`, authRequired, adminOnly, async (_req, res) => {
-  const db = await readDb();
-  const counts = orderFlow.map((status) => ({
-    status,
-    count: db.orders.filter((o) => o.status === status).length,
-  }));
-  res.json(counts);
+  try {
+    const { data: orders, error } = await supabase.from('orders').select('status');
+    if (error) throw error;
+
+    const counts = orderFlow.map((status) => ({
+      status,
+      count: orders.filter((o) => o.status === status).length,
+    }));
+    res.json(counts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.get(`${API_PREFIX}/storefront/products`, async (_req, res) => {
-  const db = await readDb();
-  const items = db.products
-    .filter((p) => p.status === 'ACTIVE')
-    .map((p) => ({
+  try {
+    const { data: products, error } = await supabase.from('products').select('*').eq('status', 'ACTIVE').eq('is_archived', false);
+    if (error) throw error;
+
+    const items = products.map((p) => ({
       id: p.id,
       name: p.name,
       description: p.description,
       category: p.category,
       image: p.images.find((i) => i.isPrimary)?.url,
-      originalPrice: p.basePrice,
-      finalPrice: computeFinalPrice(p.basePrice, p.discount),
+      originalPrice: p.base_price,
+      finalPrice: computeFinalPrice(p.base_price, p.discount),
       stock: p.variants.reduce((sum, v) => sum + v.stockQuantity, 0),
       sizes: p.variants.map((v) => ({ size: v.size, stockQuantity: v.stockQuantity })),
     }));
 
-  res.json(items);
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.use((err, _req, res, _next) => {
