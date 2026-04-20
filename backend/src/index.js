@@ -485,7 +485,7 @@ app.patch(`${API_PREFIX}/products/:id/price`, authRequired, adminOnly, async (re
     const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
     if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-    const updates: any = { base_price: parsed.data.basePrice };
+    const updates = { base_price: parsed.data.basePrice };
     if (product.discount?.isActive) {
       updates.discount = {
         ...product.discount,
