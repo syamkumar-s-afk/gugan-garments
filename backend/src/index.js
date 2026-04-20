@@ -388,7 +388,7 @@ app.patch(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res
     const { data: product, error: fetchError } = await supabase.from('products').select('*').eq('id', req.params.id).single();
     if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
-    const updates: any = {};
+    const updates = {};
     if (patch.data.name) updates.name = patch.data.name;
     if (patch.data.description) updates.description = patch.data.description;
     if (patch.data.category) updates.category = patch.data.category;
@@ -439,7 +439,7 @@ app.put(`${API_PREFIX}/products/:id`, authRequired, adminOnly, async (req, res) 
     if (fetchError || !product) return res.status(404).json({ message: 'Product not found' });
 
     const patch = parsed.data;
-    const updates: any = {};
+    const updates = {};
     if (patch.name) updates.name = patch.name;
     if (patch.description) updates.description = patch.description;
     if (patch.category) updates.category = patch.category;
