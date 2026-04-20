@@ -1,0 +1,318 @@
+{
+  "users": [
+    {
+      "id": "u1",
+      "name": "Super Admin",
+      "email": "admin@guganfashions.com",
+      "passwordHash": "$2b$10$gO3pVOtsEHDUV1OYdGvd5eFuoZJEj8gCTNL0t5GJ2fEJRLHEEx6fO",
+      "role": "admin",
+      "failedLoginAttempts": 0,
+      "lockedUntil": null,
+      "createdAt": "2026-04-13T12:32:31.651Z",
+      "updatedAt": "2026-04-14T08:29:58.687Z"
+    },
+    {
+      "id": "u2",
+      "name": "Customer",
+      "email": "user@guganfashions.com",
+      "passwordHash": "$2b$10$NtgJbIGaPZd1cf62cKbDiurFgwRd8Cmw6qeuhN0XMfwFMl6AALyEe",
+      "role": "user",
+      "failedLoginAttempts": 0,
+      "lockedUntil": null,
+      "createdAt": "2026-04-13T13:06:08.561Z",
+      "updatedAt": "2026-04-20T09:45:20.119Z"
+    }
+  ],
+  "settings": {
+    "lowStockThreshold": 10
+  },
+  "products": [
+    {
+      "id": "p1",
+      "name": "Kanchipuram Silk Saree",
+      "description": "Handwoven silk saree with zari border.",
+      "category": "Men",
+      "brand": "Gugan Fashions",
+      "basePrice": 5499,
+      "status": "ACTIVE",
+      "isArchived": false,
+      "archivedAt": null,
+      "images": [
+        {
+          "id": "img1",
+          "url": "https://images.unsplash.com/photo-1610189027563-6c6f7f399bb4?auto=format&fit=crop&w=800&q=80",
+          "sortOrder": 1,
+          "isPrimary": true
+        }
+      ],
+      "variants": [
+        {
+          "id": "v1",
+          "size": "M",
+          "color": "Maroon",
+          "stockQuantity": 6
+        },
+        {
+          "id": "v2",
+          "size": "L",
+          "color": "Royal Blue",
+          "stockQuantity": 14
+        }
+      ],
+      "discount": {
+        "type": "PERCENTAGE",
+        "value": 40,
+        "startsAt": null,
+        "expiresAt": null,
+        "isActive": true,
+        "finalPrice": 3299
+      },
+      "auditLogs": [],
+      "createdAt": "2026-04-13T12:32:31.652Z",
+      "updatedAt": "2026-04-14T08:30:08.112Z"
+    },
+    {
+      "id": "p2",
+      "name": "Cotton Kurti Set",
+      "description": "Comfort fit daily-wear kurti with dupatta.",
+      "category": "Kurtis",
+      "brand": "Gugan Fashions",
+      "basePrice": 1799,
+      "status": "ACTIVE",
+      "isArchived": false,
+      "archivedAt": null,
+      "images": [
+        {
+          "id": "img2",
+          "url": "https://images.unsplash.com/photo-1583391733981-8e7f1a0e7f4b?auto=format&fit=crop&w=800&q=80",
+          "sortOrder": 1,
+          "isPrimary": true
+        }
+      ],
+      "variants": [
+        {
+          "id": "v3",
+          "size": "S",
+          "color": "Mint",
+          "stockQuantity": 25
+        },
+        {
+          "id": "v4",
+          "size": "M",
+          "color": "Peach",
+          "stockQuantity": 6
+        }
+      ],
+      "discount": {
+        "type": null,
+        "value": null,
+        "startsAt": null,
+        "expiresAt": null,
+        "isActive": false,
+        "finalPrice": 1799
+      },
+      "auditLogs": [],
+      "createdAt": "2026-04-13T12:32:31.652Z",
+      "updatedAt": "2026-04-13T12:32:31.652Z"
+    },
+    {
+      "id": "p_rcky1tna",
+      "name": "genz tshirt",
+      "description": "genz tshirt",
+      "category": "tshirt",
+      "brand": "Gugan Fashions",
+      "basePrice": 1999,
+      "status": "ACTIVE",
+      "isArchived": true,
+      "archivedAt": "2026-04-13T14:40:21.319Z",
+      "images": [],
+      "variants": [],
+      "discount": {
+        "type": "PERCENTAGE",
+        "value": 10,
+        "startsAt": null,
+        "expiresAt": null,
+        "isActive": true,
+        "finalPrice": 1799
+      },
+      "auditLogs": [
+        {
+          "id": "a_vpv9moxp",
+          "actor": "admin@guganfashions.com",
+          "action": "PRODUCT_CREATED",
+          "changes": {
+            "name": "genz tshirt",
+            "description": "genz tshirt",
+            "category": "tshirt",
+            "brand": "Gugan Fashions",
+            "basePrice": 1999,
+            "status": "ACTIVE"
+          },
+          "createdAt": "2026-04-13T14:39:56.353Z"
+        }
+      ],
+      "createdAt": "2026-04-13T14:39:56.353Z",
+      "updatedAt": "2026-04-13T14:40:21.319Z"
+    }
+  ],
+  "orders": [
+    {
+      "id": "o1",
+      "orderNumber": "GF-1001",
+      "customerName": "Priya Raman",
+      "customerEmail": "priya@example.com",
+      "shippingAddress": "12, Lake View Road, Chennai",
+      "status": "DELIVERED",
+      "lineItems": [
+        {
+          "productId": "p1",
+          "productName": "Kanchipuram Silk Saree",
+          "variant": "M / Maroon",
+          "quantity": 1,
+          "unitPrice": 4949
+        }
+      ],
+      "totalAmount": 4949,
+      "statusHistory": [
+        {
+          "status": "ORDER_PLACED",
+          "note": "Order created",
+          "changedAt": "2026-04-13T12:32:31.652Z",
+          "changedBy": "system"
+        },
+        {
+          "status": "DISPATCHED",
+          "note": "Moved from ORDER_PLACED to DISPATCHED",
+          "changedAt": "2026-04-13T14:39:24.271Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "SHIPPING",
+          "note": "Moved from DISPATCHED to SHIPPING",
+          "changedAt": "2026-04-13T14:39:25.452Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "OUT_FOR_DELIVERY",
+          "note": "Moved from SHIPPING to OUT_FOR_DELIVERY",
+          "changedAt": "2026-04-13T14:39:26.198Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "DELIVERED",
+          "note": "Moved from OUT_FOR_DELIVERY to DELIVERED",
+          "changedAt": "2026-04-13T14:39:27.589Z",
+          "changedBy": "admin@guganfashions.com"
+        }
+      ],
+      "createdAt": "2026-04-13T12:32:31.652Z",
+      "updatedAt": "2026-04-13T14:39:27.589Z"
+    },
+    {
+      "id": "o_iqijkn0x",
+      "userId": "u2",
+      "orderNumber": "GF-4700",
+      "customerName": "Customer",
+      "customerEmail": "user@guganfashions.com",
+      "shippingAddress": "Address not provided",
+      "status": "DELIVERED",
+      "lineItems": [
+        {
+          "productId": "p1",
+          "productName": "Kanchipuram Silk Saree",
+          "variant": "M / Maroon",
+          "quantity": 1,
+          "unitPrice": 4949
+        }
+      ],
+      "totalAmount": 4949,
+      "statusHistory": [
+        {
+          "status": "ORDER_PLACED",
+          "note": "Order created by customer",
+          "changedAt": "2026-04-13T14:53:01.069Z",
+          "changedBy": "user@guganfashions.com"
+        },
+        {
+          "status": "DISPATCHED",
+          "note": "Moved from ORDER_PLACED to DISPATCHED",
+          "changedAt": "2026-04-14T08:30:35.748Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "SHIPPING",
+          "note": "Moved from DISPATCHED to SHIPPING",
+          "changedAt": "2026-04-14T08:30:35.901Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "OUT_FOR_DELIVERY",
+          "note": "Moved from SHIPPING to OUT_FOR_DELIVERY",
+          "changedAt": "2026-04-14T08:30:36.063Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "DELIVERED",
+          "note": "Moved from OUT_FOR_DELIVERY to DELIVERED",
+          "changedAt": "2026-04-14T08:30:36.221Z",
+          "changedBy": "admin@guganfashions.com"
+        }
+      ],
+      "createdAt": "2026-04-13T14:53:01.069Z",
+      "updatedAt": "2026-04-14T08:30:36.221Z"
+    },
+    {
+      "id": "o_f8vd78a2",
+      "userId": "u2",
+      "orderNumber": "GF-3367",
+      "customerName": "Customer",
+      "customerEmail": "user@guganfashions.com",
+      "shippingAddress": "Address not provided",
+      "status": "DELIVERED",
+      "lineItems": [
+        {
+          "productId": "p1",
+          "productName": "Kanchipuram Silk Saree",
+          "variant": "M / Maroon",
+          "quantity": 1,
+          "unitPrice": 4949
+        }
+      ],
+      "totalAmount": 4949,
+      "statusHistory": [
+        {
+          "status": "ORDER_PLACED",
+          "note": "Order created by customer",
+          "changedAt": "2026-04-13T14:54:01.123Z",
+          "changedBy": "user@guganfashions.com"
+        },
+        {
+          "status": "DISPATCHED",
+          "note": "Moved from ORDER_PLACED to DISPATCHED",
+          "changedAt": "2026-04-14T08:30:31.897Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "SHIPPING",
+          "note": "Moved from DISPATCHED to SHIPPING",
+          "changedAt": "2026-04-14T08:30:32.913Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "OUT_FOR_DELIVERY",
+          "note": "Moved from SHIPPING to OUT_FOR_DELIVERY",
+          "changedAt": "2026-04-14T08:30:33.502Z",
+          "changedBy": "admin@guganfashions.com"
+        },
+        {
+          "status": "DELIVERED",
+          "note": "Moved from OUT_FOR_DELIVERY to DELIVERED",
+          "changedAt": "2026-04-14T08:30:34.238Z",
+          "changedBy": "admin@guganfashions.com"
+        }
+      ],
+      "createdAt": "2026-04-13T14:54:01.123Z",
+      "updatedAt": "2026-04-14T08:30:34.238Z"
+    }
+  ]
+}
